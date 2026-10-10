@@ -10,6 +10,7 @@ const fs = require('fs');
  */
 let isConnected = false;
 let memoryServer = null;
+let cachedPromise = null;
 
 const connectDB = async () => {
   if (mongoose.connection && mongoose.connection.readyState >= 1) {
@@ -17,66 +18,90 @@ const connectDB = async () => {
     return mongoose.connection;
   }
 
-  const mongoURI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/fitora';
+  if (cachedPromise) {
+    return cachedPromise;
+  }
 
-  try {
-    const conn = await mongoose.connect(mongoURI, {
-      serverSelectionTimeoutMS: 2500, // Try real connection for 2.5s
-    });
+  const mongoURI = process.env.MONGO_URI;
 
-    isConnected = true;
-    console.log(`✅ Connected to MongoDB at: ${conn.connection.host}`);
-    return conn;
-  } catch (primaryError) {
-    console.warn(`ℹ️  Standard MongoDB instance not reachable at ${mongoURI} (${primaryError.message})`);
+  if (process.env.VERCEL) {
+    // In serverless environments, don't buffer commands when disconnected
+    mongoose.set('bufferCommands', false);
 
-    if (process.env.VERCEL) {
-      console.warn('⚠️ Running on Vercel: Primary MongoDB connection failed. Please ensure MONGO_URI is set in Vercel settings.');
+    if (!mongoURI) {
+      console.warn('⚠️ Running on Vercel: MONGO_URI is not configured in Environment Variables. Please set MONGO_URI in Vercel Project Settings.');
       isConnected = false;
       return null;
     }
+  }
 
-    console.log(`🚀 Starting high-speed embedded database instance with disk persistence...`);
+  const uriToUse = mongoURI || 'mongodb://127.0.0.1:27017/fitora';
 
-    const dbDir = path.join(__dirname, '..', '.data', 'db');
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
-
+  cachedPromise = (async () => {
     try {
-      const { MongoMemoryServer } = require('mongodb-memory-server');
-      memoryServer = await MongoMemoryServer.create({
-        instance: {
-          dbPath: dbDir,
-          storageEngine: 'wiredTiger',
-          dbName: 'fitora'
-        }
+      const conn = await mongoose.connect(uriToUse, {
+        serverSelectionTimeoutMS: 5000,
       });
-      const memUri = memoryServer.getUri('fitora');
 
-      const conn = await mongoose.connect(memUri);
       isConnected = true;
-      console.log(`✅ Persistent embedded MongoDB active at: ${memUri}`);
-      console.log(`📁 Database files saved to: ${dbDir}`);
+      console.log(`✅ Connected to MongoDB at: ${conn.connection.host}`);
       return conn;
-    } catch (memError) {
-      console.warn(`⚠️  Persistent embedded MongoDB warning: ${memError.message}. Starting fallback in-memory instance...`);
+    } catch (primaryError) {
+      console.warn(`ℹ️ MongoDB connection not reachable (${primaryError.message})`);
+
+      if (process.env.VERCEL) {
+        console.warn('⚠️ Running on Vercel: Primary MongoDB connection failed. Please ensure MONGO_URI is valid in Vercel settings.');
+        isConnected = false;
+        cachedPromise = null;
+        return null;
+      }
+
+      console.log(`🚀 Starting high-speed embedded database instance with disk persistence...`);
+
+      const dbDir = path.join(__dirname, '..', '.data', 'db');
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+      }
+
       try {
         const { MongoMemoryServer } = require('mongodb-memory-server');
         memoryServer = await MongoMemoryServer.create({
-          instance: { dbName: 'fitora' }
+          instance: {
+            dbPath: dbDir,
+            storageEngine: 'wiredTiger',
+            dbName: 'fitora'
+          }
         });
         const memUri = memoryServer.getUri('fitora');
+
         const conn = await mongoose.connect(memUri);
         isConnected = true;
-        console.log(`✅ Embedded in-memory MongoDB active at: ${memUri}`);
+        console.log(`✅ Persistent embedded MongoDB active at: ${memUri}`);
+        console.log(`📁 Database files saved to: ${dbDir}`);
         return conn;
-      } catch (fallbackError) {
-        console.error(`❌ Embedded MongoDB fallback error: ${fallbackError.message}`);
-        isConnected = false;
+      } catch (memError) {
+        console.warn(`⚠️ Persistent embedded MongoDB warning: ${memError.message}. Starting fallback in-memory instance...`);
+        try {
+          const { MongoMemoryServer } = require('mongodb-memory-server');
+          memoryServer = await MongoMemoryServer.create({
+            instance: { dbName: 'fitora' }
+          });
+          const memUri = memoryServer.getUri('fitora');
+          const conn = await mongoose.connect(memUri);
+          isConnected = true;
+          console.log(`✅ Embedded in-memory MongoDB active at: ${memUri}`);
+          return conn;
+        } catch (fallbackError) {
+          console.error(`❌ Embedded MongoDB fallback error: ${fallbackError.message}`);
+          isConnected = false;
+          cachedPromise = null;
+          return null;
+        }
       }
     }
-  }
+  })();
+
+  return cachedPromise;
 };
 
 const getDBStatus = () => isConnected;

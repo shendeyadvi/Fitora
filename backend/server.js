@@ -6,13 +6,48 @@ const { connectDB } = require('./config/db');
 
 const app = express();
 
+const fs = require('fs');
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static frontend files from the parent directory
+// Serve static frontend files when running locally
 app.use(express.static(path.join(__dirname, '..')));
+
+// ─── Database Middleware (Ensures connection before API calls) ────────────────
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api') && req.path !== '/api/health') {
+    try {
+      await connectDB();
+    } catch (err) {
+      console.error('DB connect error:', err.message);
+    }
+  }
+  next();
+});
+
+// ─── Health Check & API Status ────────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+  const { getDBStatus } = require('./config/db');
+  res.json({
+    success: true,
+    message: '✅ Fitora API is live and running',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    database: getDBStatus() ? 'Connected' : 'Disconnected (configure MONGO_URI in Vercel)',
+    isVercel: !!process.env.VERCEL
+  });
+});
+
+app.get('/api', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Fitora API root is operational',
+    version: '1.0.0'
+  });
+});
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
 app.use('/api/auth',       require('./routes/authRoutes'));
@@ -26,19 +61,17 @@ app.use('/api/progress',   require('./routes/progressRoutes'));
 app.use('/api/calendar',   require('./routes/calendarRoutes'));
 app.use('/api/steps',      require('./routes/stepRoutes'));
 
-// ─── Health Check ─────────────────────────────────────────────────────────────
-app.get('/api/health', (req, res) => {
-  res.json({
-    success: true,
-    message: '✅ Fitora API is live and running',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0'
-  });
-});
-
-// ─── Catch-all: serve index.html for any non-API route ────────────────────────
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'index.html'));
+// ─── Catch-all: serve index.html for non-API route in local environment ───────
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ success: false, message: `API route not found: ${req.path}` });
+  }
+  const indexPath = path.join(__dirname, '..', 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    next();
+  }
 });
 
 // ─── Global Error Handler ─────────────────────────────────────────────────────
@@ -49,18 +82,6 @@ app.use((err, req, res, next) => {
     message: err.message || 'Internal server error'
   });
 });
-
-// ─── Serverless Database Middleware (Vercel) ──────────────────────────────────
-if (process.env.VERCEL) {
-  app.use(async (req, res, next) => {
-    try {
-      await connectDB();
-    } catch (err) {
-      console.error('Serverless DB connect error:', err.message);
-    }
-    next();
-  });
-}
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
