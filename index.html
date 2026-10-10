@@ -29,7 +29,10 @@
         // Clean the token from the URL immediately so it is never visible
         history.replaceState({}, document.title, window.location.pathname);
       } else if (!localStorage.getItem('Fitora_token')) {
-        window.location.replace('landing.html');
+        const path = (window.location.pathname || '').toLowerCase();
+        if (!path.endsWith('landing.html') && !path.endsWith('login.html') && !path.endsWith('register.html')) {
+          window.location.replace('landing.html');
+        }
       }
     })();
   </script>

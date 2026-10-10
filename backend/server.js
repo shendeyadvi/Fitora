@@ -14,7 +14,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static frontend files when running locally
-app.use(express.static(path.join(__dirname, '..')));
+if (!process.env.VERCEL) {
+  app.use(express.static(path.join(__dirname, '..')));
+}
 
 // ─── Database Middleware (Ensures connection before API calls) ────────────────
 app.use(async (req, res, next) => {
@@ -61,18 +63,20 @@ app.use('/api/progress',   require('./routes/progressRoutes'));
 app.use('/api/calendar',   require('./routes/calendarRoutes'));
 app.use('/api/steps',      require('./routes/stepRoutes'));
 
-// ─── Catch-all: serve index.html for non-API route in local environment ───────
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) {
-    return res.status(404).json({ success: false, message: `API route not found: ${req.path}` });
-  }
-  const indexPath = path.join(__dirname, '..', 'index.html');
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    next();
-  }
-});
+// ─── Catch-all: serve index.html for non-API route in local environment ONLY ─
+if (!process.env.VERCEL) {
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      return res.status(404).json({ success: false, message: `API route not found: ${req.path}` });
+    }
+    const indexPath = path.join(__dirname, '..', 'index.html');
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      next();
+    }
+  });
+}
 
 // ─── Global Error Handler ─────────────────────────────────────────────────────
 app.use((err, req, res, next) => {

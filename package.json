@@ -2,7 +2,6 @@
   "name": "fitora",
   "version": "1.0.0",
   "description": "Fitora - Sports & Fitness Monitoring Platform",
-  "main": "backend/server.js",
   "scripts": {
     "start": "node backend/server.js",
     "dev": "nodemon backend/server.js"
